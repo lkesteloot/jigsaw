@@ -18,6 +18,7 @@
 
 import random
 import math
+import optparse
 
 tau = 2*math.pi
 
@@ -31,6 +32,7 @@ DPI = 96
 WIDTH = COLUMN_COUNT*DPI
 HEIGHT = ROW_COUNT*DPI
 
+COLOR = "#000000"
 CORNER_RADIUS = WIDTH/ROW_COUNT/3.0
 
 class Vector:
@@ -85,19 +87,17 @@ def write_header(out):
 ]>
 <svg xmlns="&ns_svg;" width="%d" height="%d" overflow="visible">
     <g id="Layer_1">
-        <rect x="0" y="0" rx="%g" ry="%g" width="%g" height="%g" fill="none" stroke="#000000"/>
-""" % (WIDTH, HEIGHT, CORNER_RADIUS, CORNER_RADIUS, WIDTH, HEIGHT))
+""" % (WIDTH, HEIGHT))
 
 def polyline(out, p, color):
     """Write a polyline object to SVG file "out". "p" is a list of Vector objects, and
     "color" is a string representing any SVG-legal color."""
 
-    out.write("""        <polyline fill="none" stroke="%s" stroke-width="1" points=" """ % (color,))
-    for v in p:
-        out.write(" %g,%g" % (v.x, v.y))
-    out.write(""" "/>\n""")
+    points = " ".join("%g,%g" % (v.x, v.y) for v in p)
+    out.write('        <polyline fill="none" stroke="%s" stroke-width="1" points="%s"/>\n' %
+            (color, points))
 
-def footer(out):
+def write_footer(out):
     """Write the SVG footer to the file object "out"."""
 
     out.write("""    </g>
@@ -121,7 +121,7 @@ def append_circle(p, v, n, center, radius, start_angle, end_angle):
         point = center + v*math.cos(th)*radius + n*math.sin(th)*radius
         p.append(point)
 
-def make_knob(out, start, end, color):
+def make_knob(outs, start, end, color):
     """Make a knob (the part that sticks out from one piece into another).
     This includes the entire segment on the side of a square.  "start" and
     "end" are points that represent the ends of the line segment. In other
@@ -132,7 +132,7 @@ def make_knob(out, start, end, color):
     line_length = (end - start).length()
 
     # Choose the base of the knob. Pick the midpoint of the line
-    # and purturb it a bit.
+    # and perturb it a bit.
     mid = start + (end - start)*(0.4 + random.random()*0.2)
 
     # The first part of our basis vector. This points down the edge.
@@ -179,29 +179,114 @@ def make_knob(out, start, end, color):
     p.append(knob_end)
     p.append(end)
 
-    polyline(out, p, color)
+    for out in outs:
+        polyline(out, p, color)
 
-def main():
+# Generate a single SVG file for the puzzle.
+def generate_single():
     out = open("jigsaw.svg", "w")
 
-    # The header includes the rounded-corner rectangle on the outside of the puzzle.
     write_header(out)
+
+    # The rounded-corner rectangle on the outside of the puzzle.
+    out.write('        <rect x="0" y="0" rx="%g" ry="%g" width="%g" height="%g" fill="none" stroke="%s"/>\n' %
+            (CORNER_RADIUS, CORNER_RADIUS, WIDTH, HEIGHT, COLOR))
 
     # Horizontal lines.
     for row in range(ROW_COUNT - 1):
         for column in range(COLUMN_COUNT):
             start = Vector(column*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
             end = Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
-            make_knob(out, start, end, "#000000")
+            make_knob([out], start, end, COLOR)
 
     # Vertical lines.
     for row in range(ROW_COUNT):
         for column in range(COLUMN_COUNT - 1):
             start = Vector((column + 1)*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT)
             end = Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
-            make_knob(out, start, end, "#000000")
+            make_knob([out], start, end, COLOR)
 
-    footer(out)
+    write_footer(out)
+
+# Generate one SVG file for each piece of the puzzle.
+def generate_separate():
+    # Row-major files.
+    outs = []
+    def get_out(row, column):
+        assert row >= 0 and row < ROW_COUNT and column >= 0 and column < COLUMN_COUNT
+        return outs[row*COLUMN_COUNT + column]
+
+    for row in range(ROW_COUNT):
+        for column in range(COLUMN_COUNT):
+            out = open("jigsaw_%d_%d.svg" % (row, column), "w")
+            outs.append(out)
+
+    for out in outs:
+        write_header(out)
+
+    # Horizontal lines.
+    for row in range(ROW_COUNT - 1):
+        for column in range(COLUMN_COUNT):
+            start = Vector(column*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
+            end = Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
+            neighbors = [get_out(row, column), get_out(row + 1, column)]
+            make_knob(neighbors, start, end, COLOR)
+
+    # Vertical lines.
+    for row in range(ROW_COUNT):
+        for column in range(COLUMN_COUNT - 1):
+            start = Vector((column + 1)*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT)
+            end = Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT)
+            neighbors = [get_out(row, column), get_out(row, column + 1)]
+            make_knob(neighbors, start, end, COLOR)
+
+    # Left border.
+    for row in range(ROW_COUNT):
+        column = 0
+        p = []
+        p.append(Vector(column*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT))
+        p.append(Vector(column*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT))
+        polyline(get_out(row, column), p, COLOR)
+
+    # Right border.
+    for row in range(ROW_COUNT):
+        column = COLUMN_COUNT - 1
+        p = []
+        p.append(Vector((column + 1)*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT))
+        p.append(Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT))
+        polyline(get_out(row, column), p, COLOR)
+
+    # Top border.
+    for column in range(COLUMN_COUNT):
+        row = 0
+        p = []
+        p.append(Vector(column*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT))
+        p.append(Vector((column + 1)*WIDTH/COLUMN_COUNT, row*HEIGHT/ROW_COUNT))
+        polyline(get_out(row, column), p, COLOR)
+
+    # Bottom border.
+    for column in range(COLUMN_COUNT):
+        row = ROW_COUNT - 1
+        p = []
+        p.append(Vector(column*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT))
+        p.append(Vector((column + 1)*WIDTH/COLUMN_COUNT, (row + 1)*HEIGHT/ROW_COUNT))
+        polyline(get_out(row, column), p, COLOR)
+
+    for out in outs:
+        write_footer(out)
+
+def main():
+    parser = optparse.OptionParser()
+    parser.add_option("--separate",
+            action="store_true", dest="separate", default=False,
+            help="generate a separate file for each piece")
+
+    (options, args) = parser.parse_args()
+
+    if options.separate:
+        generate_separate()
+    else:
+        generate_single()
 
 if __name__ == "__main__":
     main()
